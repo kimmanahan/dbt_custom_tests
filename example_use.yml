@@ -1,0 +1,104 @@
+version: 2
+
+models:
+  - name: dim_customer
+    tests:
+      # ─────────────────────────────────────────────────────────────
+      # 1. Simplest case: single key, model-to-model comparison
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer')
+          key_columns: ['customer_id']
+
+      # ─────────────────────────────────────────────────────────────
+      # 2. Composite key
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer_address')
+          key_columns: ['customer_id', 'address_type']
+
+      # ─────────────────────────────────────────────────────────────
+      # 3. Mismatched key column names between datasets
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer_legacy')
+          compare_key_columns: ['cust_id']
+          final_key_columns: ['customer_id']
+
+      # ─────────────────────────────────────────────────────────────
+      # 4. Shared where-clause (applied to both sides)
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer')
+          key_columns: ['customer_id']
+          where_clause: "is_active = true"
+
+      # ─────────────────────────────────────────────────────────────
+      # 5. Side-specific where-clauses
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer')
+          key_columns: ['customer_id']
+          compare_where: "created_at >= '2024-01-01'"
+          model_where: "is_deleted = false"
+
+      # ─────────────────────────────────────────────────────────────
+      # 6. Custom SQL on the compare side (multi-table join)
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_sql: |
+            select o.customer_id, o.order_id
+            from {{ ref('stg_orders') }} o
+            inner join {{ ref('stg_order_items') }} oi
+              on o.order_id = oi.order_id
+            where oi.quantity > 0
+          key_columns: ['customer_id', 'order_id']
+
+      # ─────────────────────────────────────────────────────────────
+      # 7. Custom SQL on both sides
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_sql: |
+            select customer_id
+            from {{ ref('stg_customer') }}
+            where status = 'active'
+          final_sql: |
+            select customer_id
+            from {{ ref('dim_customer') }}
+            where current_flag = true
+          key_columns: ['customer_id']
+
+      # ─────────────────────────────────────────────────────────────
+      # 8. Threshold tolerance — only fail if 100+ records missing
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer')
+          key_columns: ['customer_id']
+          fail_if_gte: 100
+
+      # ─────────────────────────────────────────────────────────────
+      # 9. Override severity to error (test default is warn)
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_model: ref('stg_customer')
+          key_columns: ['customer_id']
+          config:
+            severity: error
+
+      # ─────────────────────────────────────────────────────────────
+      # 10. Kitchen sink — composite key, mismatched names,
+      #     custom SQL, side-specific filters, threshold, error severity
+      # ─────────────────────────────────────────────────────────────
+      - all_records_exist_in_final:
+          compare_sql: |
+            select c.cust_id, a.addr_type
+            from {{ ref('stg_customer_legacy') }} c
+            inner join {{ ref('stg_address_legacy') }} a
+              on c.cust_id = a.cust_id
+          compare_key_columns: ['cust_id', 'addr_type']
+          final_key_columns: ['customer_id', 'address_type']
+          compare_where: "c.migrated_at is not null"
+          model_where: "is_active = true"
+          fail_if_gte: 5
+          config:
+            severity: error
